@@ -43,7 +43,7 @@ toolchain for terSIDH‑style flows. Key elements:
 
 - Per‑path cofactor selection for kernel reduction (real/dummy suffixes) to ensure
   the kernel point has exact order `primes[i]` at every step (including degree‑4).
-- Fixed‑iteration Montgomery ladder is used in the key‑independent “prep” phase to
+- Fixed‑iteration Montgomery ladder is used in the key‑independent phase to
   mitigate timing variance from differing scalar bitlengths.
 - Constant‑time conditional moves (cmov) are used for path selection and state updates.
 
