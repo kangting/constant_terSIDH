@@ -259,29 +259,17 @@ void isogeny_constant(uint8_t number,
         else            sel_dummy[i>>3] |= (1u << (i & 7));
     }
 
-    // Build per-path suffixes in constant time:
-    // suf_real[i]  = ∏_{j>=i, es[j]!=0} primes[j]
-    // suf_dummy[i] = ∏_{j>=i, es[j]==0} primes[j]
-    uint_custom suf_real[NUM_PRIMES + 1], suf_dummy[NUM_PRIMES + 1];
-    suf_real[NUM_PRIMES]  = uint_custom_1;
-    suf_dummy[NUM_PRIMES] = uint_custom_1;
-    for (size_t idx = NUM_PRIMES; idx-- > 0; ) {
-        suf_real[idx]  = suf_real[idx+1];
-        suf_dummy[idx] = suf_dummy[idx+1];
-
-        uint_custom t;
-        // update real suffix if es[idx]!=0
-        t = suf_real[idx];
-        uint_custom_mul3_64(&t, &t, primes[idx]);
-        uint8_t m_real = ct_mask_u8(es[idx] != 0);
-        ct_mem_cmov(&suf_real[idx], &t, sizeof(t), m_real);
-
-        // update dummy suffix if es[idx]==0
-        t = suf_dummy[idx];
-        uint_custom_mul3_64(&t, &t, primes[idx]);
-        uint8_t m_dummy = ct_mask_u8(es[idx] == 0);
-        ct_mem_cmov(&suf_dummy[idx], &t, sizeof(t), m_dummy);
+    // Randomize processing order of primes (Fisher-Yates shuffle)
+    size_t order[NUM_PRIMES];
+    for (size_t i = 0; i < NUM_PRIMES; ++i) order[i] = i;
+    for (size_t k = NUM_PRIMES; k > 1; --k) {
+        uint32_t r;
+        randombytes(&r, sizeof(r));
+        size_t j = (size_t)(r % k);
+        size_t tmp = order[k-1]; order[k-1] = order[j]; order[j] = tmp;
     }
+    // Track which primes have been used already (to exclude from future cofactors)
+    uint8_t used[NUM_PRIMES] = {0};
 
     // ------------------------------------------------------------------
     // add_sel/add_unsel
@@ -322,7 +310,8 @@ void isogeny_constant(uint8_t number,
     } 
     proj K2;
 
-    for (size_t i = 0; i < NUM_PRIMES; ++i) {
+    for (size_t it = 0; it < NUM_PRIMES; ++it) {
+        size_t i = order[it];
 
         int M = (sel_real[i>>3] >> (i & 7)) & 1;
         uint8_t m  = ct_mask_u8(M);        // 0xFF if real, else 0x00
@@ -336,11 +325,17 @@ void isogeny_constant(uint8_t number,
         proj_cmov(&K, &add_sel, m); proj_cmov(&A, &A_sel, m);
         if (number == 3) { proj_cmov(&R, &R_sel, m); proj_cmov(&S, &S_sel, m); }
 
-        // Real and dummy cofactors
-        uint_custom cof_real = suf_real[i+1];
-        uint_custom cof_dummy = suf_dummy[i+1];
-        uint_custom cof_sel = cof_dummy; ct_mem_cmov(&cof_sel, &cof_real, sizeof(cof_sel), m);
-        uint_custom cof_uns = cof_real;  ct_mem_cmov(&cof_uns, &cof_dummy, sizeof(cof_uns), m);
+        // Build cofactors on-the-fly by multiplying remaining primes in each subgroup
+        uint_custom cof_sel = uint_custom_1;
+        uint_custom cof_uns = uint_custom_1;
+        for (size_t j = 0; j < NUM_PRIMES; ++j) {
+            if (j == i || used[j]) continue; // skip current and already used
+            if ((es[j] != 0) == (M != 0)) {
+                uint_custom_mul3_64(&cof_sel, &cof_sel, primes[j]);
+            } else {
+                uint_custom_mul3_64(&cof_uns, &cof_uns, primes[j]);
+            }
+        }
 
         // Real K2
         xMUL(&K2, &A, &K, &cof_sel);
@@ -366,6 +361,7 @@ void isogeny_constant(uint8_t number,
             proj_cmov(&R_unsel,&R, m0);    proj_cmov(&S_unsel,&S, m0);
         }
 
+        used[i] = 1; // mark this prime as processed
     }
 
     *A_out = A_sel;
